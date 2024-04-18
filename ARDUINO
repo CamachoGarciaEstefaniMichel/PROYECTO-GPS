@@ -1,0 +1,166 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <TinyGPS++.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+#define RXD2 16
+#define TXD2 17
+HardwareSerial neogps(1);
+char datoCmd = 0;
+
+#define NMEA 0
+#define I2C_ADDR    0x27
+LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2); 
+
+TinyGPSPlus gps;
+
+const char* ssid = "Galaxy";
+const char* password = "1234567890";
+
+void setup() {
+  Serial.begin(115200);
+  neogps.begin(9600, SERIAL_8N1, RXD2, TXD2);
+  lcd.init(); 
+  lcd.backlight(); 
+  lcd.clear();
+  lcd.print(" PROYECTO GPS");
+  delay(2000);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Conectando a WiFi...");
+  }
+  Serial.println("Conectado a la red WiFi");
+}
+
+void loop() {
+  visualizacion_lcd();
+
+  if (NMEA) {
+    while (neogps.available()) {
+      datoCmd = (char)neogps.read();
+      Serial.print(datoCmd);
+    }
+  }
+  else {
+    boolean newData = false;
+    for (unsigned long start = millis(); millis() - start < 1000;) {
+      while (neogps.available()) {
+        if (gps.encode(neogps.read())) {
+          newData = true;
+        }
+      }
+    }
+
+    if (newData == true) {
+      newData = false;
+      Visualizacion_Serial();
+
+      if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+        http.begin("http://192.168.188.173:3000/api/v1/ubicacion");
+        http.addHeader("Content-Type", "application/json");
+
+        if (!isnan(gps.location.lat()) && !isnan(gps.location.lng())) {
+          StaticJsonDocument<200> jsonDoc;  
+          jsonDoc["latitude"] = gps.location.lat();
+          jsonDoc["longitude"] = gps.location.lng();
+
+          String jsonStr;
+          serializeJson(jsonDoc, jsonStr);
+
+          int httpResponseCode = http.POST(jsonStr);
+          if (httpResponseCode > 0) {
+            String response = http.getString();
+            Serial.println("Respuesta del servidor: " + response);
+          } else {
+            Serial.print("Error en la solicitud HTTP: ");
+            Serial.println(httpResponseCode);
+          }
+        } else {
+          Serial.println("Datos de localización no válidos. No se enviarán al servidor.");
+        }
+
+        http.end();
+      } else {
+        Serial.println("Error al conectar a WiFi");
+      }
+    }
+  }
+
+  delay(5000);
+}
+
+void visualizacion_lcd(void) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("LAT: ");
+  lcd.print(gps.location.lat(), 6);
+  lcd.setCursor(0, 1);
+  lcd.print("LON: ");
+  lcd.print(gps.location.lng(), 6);
+  delay(2000);
+  lcd.clear();
+  lcd.print("VEL: ");
+  lcd.print(gps.speed.kmph());
+  lcd.print("Km/h");
+  lcd.setCursor(0, 1);
+  lcd.print("SAT: ");
+  lcd.print(gps.satellites.value());
+  delay(2000);
+  lcd.clear();
+  lcd.print("ALT: ");
+  lcd.print(gps.altitude.meters(), 0);
+  delay(2000);
+  lcd.clear();
+  lcd.print("HOR: ");
+  lcd.print(gps.time.hour());
+  lcd.print(":");
+  lcd.print(gps.time.minute());
+  lcd.print(":");
+  lcd.print(gps.time.second());
+  lcd.setCursor(0, 1);
+  lcd.print("FEC: ");
+  lcd.print(gps.date.day());
+  lcd.print("/");
+  lcd.print(gps.date.month());
+  lcd.print("/");
+  lcd.print(gps.date.year());
+  delay(2000);
+}
+
+void Visualizacion_Serial(void) {
+  if (gps.location.isValid() == 1) {
+    Serial.print("Lat: ");
+    Serial.println(gps.location.lat(), 6);
+    Serial.print("Lng: ");
+    Serial.println(gps.location.lng(), 6);
+    Serial.print("Speed: ");
+    Serial.println(gps.speed.kmph());
+    Serial.print("SAT:");
+    Serial.println(gps.satellites.value());
+    Serial.print("ALT:");
+    Serial.println(gps.altitude.meters(), 0);
+
+    Serial.print("Date: ");
+    Serial.print(gps.date.day());
+    Serial.print("/");
+    Serial.print(gps.date.month());
+    Serial.print("/");
+    Serial.println(gps.date.year());
+
+    Serial.print("Hour: ");
+    Serial.print(gps.time.hour());
+    Serial.print(":");
+    Serial.print(gps.time.minute());
+    Serial.print(":");
+    Serial.println(gps.time.second());
+    Serial.println("---------------------------");
+  }
+  else {
+    Serial.println("Sin señal gps");
+  }
+}
